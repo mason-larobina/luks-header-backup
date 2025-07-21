@@ -120,6 +120,27 @@ fn main() -> Result<()> {
 
         info!("Backup successful for {}", device);
 
+        let temp_txt_path = temp_dir.path().join(format!("{}.tmp.txt", uuid));
+
+        let mut dump_cmd = Command::new("cryptsetup");
+        dump_cmd.arg("luksDump");
+        dump_cmd.arg("--header");
+        dump_cmd.arg(&temp_file_path);
+
+        debug!("Running: {:?}", dump_cmd);
+        let dump_output = dump_cmd.output().context("Failed to run luksDump")?;
+
+        if !dump_output.status.success() {
+            anyhow::bail!(
+                "luksDump failed with exit code {}",
+                dump_output.status.code().unwrap_or(-1)
+            );
+        }
+
+        fs::write(&temp_txt_path, &dump_output.stdout).context("Failed to write luksDump output to file")?;
+
+        info!("luksDump successful for {}", device);
+
         let mut header_data = Vec::new();
         let mut file = fs::File::open(&temp_file_path).context("Failed to open temp file")?;
         file.read_to_end(&mut header_data)
@@ -133,24 +154,37 @@ fn main() -> Result<()> {
 
         info!("Computed SHA256 hash: {}", hash_hex);
 
-        let final_path = temp_dir.path().join(format!(
+        let final_img_path = temp_dir.path().join(format!(
             "luks_header_backup.{}.{}.{}.img",
             hostname,
             uuid,
             &hash_hex[0..8]
         ));
 
-        fs::rename(&temp_file_path, &final_path).context("Failed to rename temp file")?;
+        let final_txt_path = temp_dir.path().join(format!(
+            "luks_header_backup.{}.{}.{}.txt",
+            hostname,
+            uuid,
+            &hash_hex[0..8]
+        ));
 
-        info!("Saved header to {:?}", final_path);
+        fs::rename(&temp_file_path, &final_img_path).context("Failed to rename temp img file")?;
 
-        files_to_copy.push(final_path);
+        fs::rename(&temp_txt_path, &final_txt_path).context("Failed to rename temp txt file")?;
+
+        info!("Saved header to {:?}", final_img_path);
+        info!("Saved dump to {:?}", final_txt_path);
+
+        files_to_copy.push(final_img_path);
+        files_to_copy.push(final_txt_path);
     }
 
     if files_to_copy.is_empty() {
         info!("No files to copy, exit");
         return Ok(());
     }
+
+    let mut all_success = true;
 
     for remote in &args.remotes {
         info!("Processing remote: {}", remote);
@@ -169,15 +203,19 @@ fn main() -> Result<()> {
         let status = cmd.status().context("Failed to run scp")?;
 
         if !status.success() {
-            anyhow::bail!("scp failed with exit code {}", status.code().unwrap_or(-1));
+            error!("scp to {} failed with exit code {}", remote, status.code().unwrap_or(-1));
+            all_success = false;
+        } else {
+            info!("Copy successful to {}", remote);
         }
-
-        info!("Copy successful to {}", remote);
     }
 
-    info!("Backup process completed successfully");
-
-    Ok(())
+    if all_success {
+        info!("Backup process completed successfully");
+        Ok(())
+    } else {
+        anyhow::bail!("Some remote copies failed");
+    }
 }
 
 #[cfg(test)]
