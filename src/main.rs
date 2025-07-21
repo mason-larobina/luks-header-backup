@@ -201,8 +201,14 @@ TYPE=crypto_LUKS
         let result = parse_blkid_output(sample_output)?;
 
         assert_eq!(result.len(), 2);
-        assert_eq!(result.get("/dev/sda1").unwrap(), "12345678-1234-1234-1234-123456789abc");
-        assert_eq!(result.get("/dev/sdb1").unwrap(), "87654321-4321-4321-4321-876543210fed");
+        assert_eq!(
+            result.get("/dev/sda1").unwrap(),
+            "12345678-1234-1234-1234-123456789abc"
+        );
+        assert_eq!(
+            result.get("/dev/sdb1").unwrap(),
+            "87654321-4321-4321-4321-876543210fed"
+        );
         assert!(result.get("/dev/sda2").is_none());
 
         // Test empty output
