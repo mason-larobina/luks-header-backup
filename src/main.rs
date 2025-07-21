@@ -35,6 +35,7 @@ fn get_luks_device_uuid_map() -> Result<HashMap<String, String>> {
         if map.get("TYPE").map_or(false, |ty| ty == "crypto_LUKS") {
             if let (Some(dev), Some(uuid)) = (map.get("DEVNAME"), map.get("UUID")) {
                 result.insert(dev.clone(), uuid.clone());
+                log::debug!("Found LUKS device {} with UUID {}", dev, uuid);
             }
         }
     }
@@ -45,18 +46,33 @@ fn get_luks_device_uuid_map() -> Result<HashMap<String, String>> {
 fn main() -> Result<()> {
     let args = Args::parse();
 
+    if std::env::var_os("RUST_LOG").is_none() {
+        std::env::set_var("RUST_LOG", "info");
+    }
+    env_logger::init();
+
+    log::info!("Starting LUKS header backup with remotes: {:?}", args.remotes);
+
     let hostname = hostname::get()
         .context("Failed to get hostname")?
         .to_string_lossy()
         .into_owned();
 
+    log::info!("Hostname: {}", hostname);
+
     let temp_dir = TempDir::new("luks-header-backup").context("Failed to create temp dir")?;
+
+    log::info!("Created temporary directory: {:?}", temp_dir.path());
 
     let mut files_to_copy: Vec<PathBuf> = Vec::new();
 
     let device_uuid_map = get_luks_device_uuid_map()?;
 
+    log::info!("Found {} LUKS devices", device_uuid_map.len());
+
     for (device, uuid) in device_uuid_map {
+        log::info!("Backing up LUKS header for device {} with UUID {}", device, uuid);
+
         let temp_file_path = temp_dir.path().join(format!("{}.tmp", uuid));
 
         let status = Command::new("cryptsetup")
@@ -68,6 +84,8 @@ fn main() -> Result<()> {
             anyhow::bail!("cryptsetup failed with exit code {}", status.code().unwrap_or(-1));
         }
 
+        log::info!("Backup successful for {}", device);
+
         let mut header_data = Vec::new();
         let mut file = fs::File::open(&temp_file_path).context("Failed to open temp file")?;
         file.read_to_end(&mut header_data).context("Failed to read temp file")?;
@@ -78,15 +96,21 @@ fn main() -> Result<()> {
 
         let hash_hex: String = hash.iter().map(|byte| format!("{:02x}", byte)).collect();
 
+        log::info!("Computed SHA1 hash: {}", hash_hex);
+
         let final_path = temp_dir.path().join(format!("luks-header-{}-{}-{}.img", hostname, uuid, hash_hex));
 
         fs::rename(&temp_file_path, &final_path).context("Failed to rename temp file")?;
+
+        log::info!("Saved header to {:?}", final_path);
 
         files_to_copy.push(final_path);
     }
 
     for remote in &args.remotes {
+        log::info!("Processing remote: {}", remote);
         if files_to_copy.is_empty() {
+            log::info!("No files to copy, skipping");
             continue;
         }
 
@@ -101,7 +125,11 @@ fn main() -> Result<()> {
         if !status.success() {
             anyhow::bail!("scp failed with exit code {}", status.code().unwrap_or(-1));
         }
+
+        log::info!("Copy successful to {}", remote);
     }
+
+    log::info!("Backup process completed successfully");
 
     Ok(())
 }
