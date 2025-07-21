@@ -7,6 +7,9 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::collections::HashMap;
 use tempdir::TempDir;
+use env_logger;
+use hostname;
+use log;
 
 #[derive(Parser)]
 struct Args {
@@ -16,6 +19,8 @@ struct Args {
 }
 
 fn get_luks_device_uuid_map() -> Result<HashMap<String, String>> {
+    log::info!("Executing command: blkid -o export");
+
     let output = Command::new("blkid")
         .args(["-o", "export"])
         .output()
@@ -77,6 +82,8 @@ fn main() -> Result<()> {
 
         let temp_file_path = temp_dir.path().join(format!("{}.tmp", uuid));
 
+        log::info!("Executing command: cryptsetup luksHeaderBackup {} --header-backup-file {}", &device, temp_file_path.to_string_lossy());
+
         let status = Command::new("cryptsetup")
             .args(["luksHeaderBackup", &device, "--header-backup-file", &temp_file_path.to_string_lossy()])
             .status()
@@ -118,6 +125,8 @@ fn main() -> Result<()> {
 
         let mut scp_args: Vec<String> = files_to_copy.iter().map(|p| p.to_string_lossy().to_string()).collect();
         scp_args.push(remote.clone());
+
+        log::info!("Executing command: scp {}", scp_args.as_slice().join(" "));
 
         let status = Command::new("scp")
             .args(scp_args)
