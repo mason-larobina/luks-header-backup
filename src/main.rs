@@ -5,6 +5,7 @@ use std::fs;
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::Command;
+use std::collections::HashMap;
 use tempdir::TempDir;
 
 #[derive(Parser)]
@@ -12,6 +13,33 @@ struct Args {
     /// Remote SCP destinations (e.g., root@host:/backup/dir/)
     #[arg(required = true)]
     remotes: Vec<String>,
+}
+
+fn get_luks_device_uuid_map() -> Result<HashMap<String, String>> {
+    let output = Command::new("blkid")
+        .args(["-o", "export"])
+        .output()
+        .context("Failed to run blkid to find LUKS devices")?;
+
+    let output_str = String::from_utf8(output.stdout).context("Failed to parse blkid output")?;
+
+    let mut result: HashMap<String, String> = HashMap::new();
+
+    for segment in output_str.split("\n\n") {
+        let mut map: HashMap<String, String> = HashMap::new();
+        for line in segment.lines() {
+            if let Some((key, value)) = line.split_once('=') {
+                map.insert(key.to_string(), value.to_string());
+            }
+        }
+        if map.get("TYPE").map_or(false, |ty| ty == "crypto_LUKS") {
+            if let (Some(dev), Some(uuid)) = (map.get("DEVNAME"), map.get("UUID")) {
+                result.insert(dev.clone(), uuid.clone());
+            }
+        }
+    }
+
+    Ok(result)
 }
 
 fn main() -> Result<()> {
@@ -26,26 +54,9 @@ fn main() -> Result<()> {
 
     let mut files_to_copy: Vec<PathBuf> = Vec::new();
 
-    let output = Command::new("blkid")
-        .args(["-t", "TYPE=crypto_LUKS", "-o", "device"])
-        .output()
-        .context("Failed to run blkid to find LUKS devices")?;
+    let device_uuid_map = get_luks_device_uuid_map()?;
 
-    let devices: Vec<String> = String::from_utf8(output.stdout)?
-        .lines()
-        .map(|s| s.to_string())
-        .collect();
-
-    for device in devices {
-        let uuid_output = Command::new("blkid")
-            .args(["-s", "UUID", "-o", "value", &device])
-            .output()
-            .context("Failed to get UUID")?;
-
-        let uuid = String::from_utf8(uuid_output.stdout)?
-            .trim()
-            .to_string();
-
+    for (device, uuid) in device_uuid_map {
         let temp_file_path = temp_dir.path().join(format!("{}.tmp.img", uuid));
 
         let status = Command::new("cryptsetup")
