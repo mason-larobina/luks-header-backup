@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use env_logger;
-use hostname;
+use nix::sys::utsname::uname;
+use nix::unistd::getuid;
 use log::*;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -63,12 +64,7 @@ fn main() -> Result<()> {
     }
     env_logger::init();
 
-    let output = Command::new("id")
-        .arg("-u")
-        .output()
-        .context("Failed to check user ID")?;
-    let uid_str = String::from_utf8(output.stdout).context("Invalid UTF-8 in id output")?;
-    if uid_str.trim() != "0" {
+    if !getuid().is_root() {
         anyhow::bail!("This program must be run as root");
     }
 
@@ -77,10 +73,11 @@ fn main() -> Result<()> {
         args.remotes
     );
 
-    let hostname = hostname::get()
-        .context("Failed to get hostname")?
+    let hostname = uname()
+        .context("Failed to get uname")?
+        .nodename()
         .to_string_lossy()
-        .into_owned();
+        .to_string();
 
     info!("Hostname: {}", hostname);
 
