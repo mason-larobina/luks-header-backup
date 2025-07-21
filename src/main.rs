@@ -57,7 +57,7 @@ fn main() -> Result<()> {
     let device_uuid_map = get_luks_device_uuid_map()?;
 
     for (device, uuid) in device_uuid_map {
-        let temp_file_path = temp_dir.path().join(format!("{}.tmp.img", uuid));
+        let temp_file_path = temp_dir.path().join(format!("{}.tmp", uuid));
 
         let status = Command::new("cryptsetup")
             .args(["luksHeaderBackup", &device, "--header-backup-file", &temp_file_path.to_string_lossy()])
@@ -78,12 +78,11 @@ fn main() -> Result<()> {
 
         let hash_hex: String = hash.iter().map(|byte| format!("{:02x}", byte)).collect();
 
-        let final_path = temp_dir.path().join(format!("{}-{}-{}.img", hostname, uuid, hash_hex));
+        let final_path = temp_dir.path().join(format!("luks-header-{}-{}-{}.img", hostname, uuid, hash_hex));
 
         fs::rename(&temp_file_path, &final_path).context("Failed to rename temp file")?;
 
         files_to_copy.push(final_path);
-
     }
 
     for remote in &args.remotes {
