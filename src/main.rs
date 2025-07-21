@@ -3,7 +3,9 @@ use clap::Parser;
 use sha1::{Digest, Sha1};
 use std::fs;
 use std::io::Read;
+use std::path::PathBuf;
 use std::process::Command;
+use tempdir::TempDir;
 
 #[derive(Parser)]
 struct Args {
@@ -19,6 +21,10 @@ fn main() -> Result<()> {
         .context("Failed to get hostname")?
         .to_string_lossy()
         .into_owned();
+
+    let temp_dir = TempDir::new("luks-header-backup").context("Failed to create temp dir")?;
+
+    let mut files_to_copy: Vec<PathBuf> = Vec::new();
 
     let output = Command::new("blkid")
         .args(["-t", "TYPE=crypto_LUKS", "-o", "device"])
@@ -40,10 +46,10 @@ fn main() -> Result<()> {
             .trim()
             .to_string();
 
-        let temp_file = format!("{}.tmp.img", uuid);
+        let temp_file_path = temp_dir.path().join(format!("{}.tmp.img", uuid));
 
         let status = Command::new("cryptsetup")
-            .args(["luksHeaderBackup", &device, "--header-backup-file", &temp_file])
+            .args(["luksHeaderBackup", &device, "--header-backup-file", &temp_file_path.to_string_lossy()])
             .status()
             .context("Failed to backup LUKS header")?;
 
@@ -52,7 +58,7 @@ fn main() -> Result<()> {
         }
 
         let mut header_data = Vec::new();
-        let mut file = fs::File::open(&temp_file).context("Failed to open temp file")?;
+        let mut file = fs::File::open(&temp_file_path).context("Failed to open temp file")?;
         file.read_to_end(&mut header_data).context("Failed to read temp file")?;
 
         let mut hasher = Sha1::new();
@@ -61,19 +67,29 @@ fn main() -> Result<()> {
 
         let hash_hex: String = hash.iter().map(|byte| format!("{:02x}", byte)).collect();
 
-        let filename = format!("{}-{}-{}.img", hostname, uuid, hash_hex);
+        let final_path = temp_dir.path().join(format!("{}-{}-{}.img", hostname, uuid, hash_hex));
 
-        fs::rename(&temp_file, &filename).context("Failed to rename temp file")?;
+        fs::rename(&temp_file_path, &final_path).context("Failed to rename temp file")?;
 
-        for remote in &args.remotes {
-            let status = Command::new("scp")
-                .args([&filename, remote])
-                .status()
-                .context("Failed to run scp")?;
+        files_to_copy.push(final_path);
 
-            if !status.success() {
-                anyhow::bail!("scp failed with exit code {}", status.code().unwrap_or(-1));
-            }
+    }
+
+    for remote in &args.remotes {
+        if files_to_copy.is_empty() {
+            continue;
+        }
+
+        let mut scp_args: Vec<String> = files_to_copy.iter().map(|p| p.to_string_lossy().to_string()).collect();
+        scp_args.push(remote.clone());
+
+        let status = Command::new("scp")
+            .args(scp_args)
+            .status()
+            .context("Failed to run scp")?;
+
+        if !status.success() {
+            anyhow::bail!("scp failed with exit code {}", status.code().unwrap_or(-1));
         }
     }
 
