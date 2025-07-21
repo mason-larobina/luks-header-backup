@@ -124,7 +124,6 @@ fn main() -> Result<()> {
 
         let mut dump_cmd = Command::new("cryptsetup");
         dump_cmd.arg("luksDump");
-        dump_cmd.arg("--header");
         dump_cmd.arg(&temp_file_path);
 
         debug!("Running: {:?}", dump_cmd);
