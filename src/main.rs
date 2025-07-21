@@ -134,8 +134,10 @@ fn main() -> Result<()> {
         info!("Computed SHA256 hash: {}", hash_hex);
 
         let final_path = temp_dir.path().join(format!(
-            "luks-header-{}-{}-{}.img",
-            hostname, uuid, hash_hex
+            "luks_header_backup.{}.{}.{}.img",
+            hostname,
+            uuid,
+            &hash_hex[0..8]
         ));
 
         fs::rename(&temp_file_path, &final_path).context("Failed to rename temp file")?;
