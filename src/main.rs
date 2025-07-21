@@ -19,10 +19,22 @@ struct Args {
 }
 
 fn get_luks_device_uuid_map() -> Result<HashMap<String, String>> {
-    log::info!("Executing command: blkid -o export");
+    let mut cmd = Command::new("blkid");
+    cmd.args(["-o", "export"]);
 
-    let output = Command::new("blkid")
-        .args(["-o", "export"])
+    let program = cmd.get_program().to_string_lossy();
+
+    let mut args_str = String::new();
+    for (i, a) in cmd.get_args().enumerate() {
+        if i > 0 {
+            args_str.push(' ');
+        }
+        args_str.push_str(&a.to_string_lossy());
+    }
+
+    log::debug!("Executing command: {} {}", program, args_str);
+
+    let output = cmd
         .output()
         .context("Failed to run blkid to find LUKS devices")?;
 
@@ -82,10 +94,25 @@ fn main() -> Result<()> {
 
         let temp_file_path = temp_dir.path().join(format!("{}.tmp", uuid));
 
-        log::info!("Executing command: cryptsetup luksHeaderBackup {} --header-backup-file {}", &device, temp_file_path.to_string_lossy());
+        let mut cmd = Command::new("cryptsetup");
+        cmd.arg("luksHeaderBackup");
+        cmd.arg(&device);
+        cmd.arg("--header-backup-file");
+        cmd.arg(&temp_file_path);
 
-        let status = Command::new("cryptsetup")
-            .args(["luksHeaderBackup", &device, "--header-backup-file", &temp_file_path.to_string_lossy()])
+        let program = cmd.get_program().to_string_lossy();
+
+        let mut args_str = String::new();
+        for (i, a) in cmd.get_args().enumerate() {
+            if i > 0 {
+                args_str.push(' ');
+            }
+            args_str.push_str(&a.to_string_lossy());
+        }
+
+        log::debug!("Executing command: {} {}", program, args_str);
+
+        let status = cmd
             .status()
             .context("Failed to backup LUKS header")?;
 
@@ -126,10 +153,22 @@ fn main() -> Result<()> {
         let mut scp_args: Vec<String> = files_to_copy.iter().map(|p| p.to_string_lossy().to_string()).collect();
         scp_args.push(remote.clone());
 
-        log::info!("Executing command: scp {}", scp_args.as_slice().join(" "));
+        let mut cmd = Command::new("scp");
+        cmd.args(&scp_args);
 
-        let status = Command::new("scp")
-            .args(scp_args)
+        let program = cmd.get_program().to_string_lossy();
+
+        let mut args_str = String::new();
+        for (i, a) in cmd.get_args().enumerate() {
+            if i > 0 {
+                args_str.push(' ');
+            }
+            args_str.push_str(&a.to_string_lossy());
+        }
+
+        log::debug!("Executing command: {} {}", program, args_str);
+
+        let status = cmd
             .status()
             .context("Failed to run scp")?;
 
