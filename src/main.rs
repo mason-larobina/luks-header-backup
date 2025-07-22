@@ -3,9 +3,10 @@ use clap::Parser;
 use log::*;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, Permissions};
+use std::os::unix::fs::PermissionsExt;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 #[derive(Parser)]
@@ -69,13 +70,74 @@ fn get_luks_device_uuid_map() -> Result<HashMap<String, String>> {
     parse_blkid_output(&output_str)
 }
 
+fn backup_device(device: String, uuid: String, hostname: &str, temp_path: &Path, files_to_copy: &mut Vec<PathBuf>) -> Result<()> {
+    info!("Backing up LUKS header for device {device} with UUID {uuid}");
+
+    let temp_file_path = temp_path.join(format!("{uuid}.tmp"));
+
+    let mut cmd = Command::new("cryptsetup");
+    cmd.arg("luksHeaderBackup");
+    cmd.arg(&device);
+    cmd.arg("--header-backup-file");
+    cmd.arg(&temp_file_path);
+
+    run_command(&mut cmd).context("Backup LUKS header")?;
+
+    fs::set_permissions(&temp_file_path, Permissions::from_mode(0o600)).context("Set temp img permissions")?;
+
+    info!("Backup successful for {device}");
+
+    let temp_txt_path = temp_path.join(format!("{uuid}.tmp.txt"));
+
+    let mut dump_cmd = Command::new("cryptsetup");
+    dump_cmd.arg("luksDump");
+    dump_cmd.arg(&temp_file_path);
+
+    let dump_output = run_command(&mut dump_cmd).context("Dump LUKS header")?;
+
+    fs::write(&temp_txt_path, &dump_output.stdout)
+        .context("Failed to write luksDump output to file")?;
+
+    fs::set_permissions(&temp_txt_path, Permissions::from_mode(0o600)).context("Set temp txt permissions")?;
+
+    info!("luksDump successful for {device}");
+
+    let mut header_data = Vec::new();
+    let mut file = fs::File::open(&temp_file_path).context("Failed to open temp file")?;
+    file.read_to_end(&mut header_data)
+        .context("Failed to read temp file")?;
+
+    let mut hasher = Sha256::new();
+    hasher.update(&header_data);
+    let hash = hasher.finalize();
+    let hash_hex: String = hash.iter().map(|byte| format!("{byte:02x}")).collect();
+    let short_hash = &hash_hex[0..8];
+    debug!("Computed SHA256 hash: {hash_hex}");
+
+    let final_img_path = temp_path.join(format!(
+        "luks_header_backup.{hostname}.{uuid}.{short_hash}.img"
+    ));
+    let final_txt_path = temp_path.join(format!(
+        "luks_header_backup.{hostname}.{uuid}.{short_hash}.txt"
+    ));
+
+    fs::rename(&temp_file_path, &final_img_path).context("Failed to rename temp img file")?;
+    fs::rename(&temp_txt_path, &final_txt_path).context("Failed to rename temp txt file")?;
+
+    info!("Saved header to {final_img_path:?}");
+    info!("Saved dump to {final_txt_path:?}");
+
+    files_to_copy.push(final_img_path);
+    files_to_copy.push(final_txt_path);
+
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
 
     if std::env::var_os("RUST_LOG").is_none() {
-        unsafe {
-            std::env::set_var("RUST_LOG", "info");
-        }
+        std::env::set_var("RUST_LOG", "info");
     }
     env_logger::init();
 
@@ -96,6 +158,8 @@ fn main() -> Result<()> {
 
     let temp_dir = tempfile::tempdir().context("Failed to create temp dir")?;
 
+    fs::set_permissions(temp_dir.path(), Permissions::from_mode(0o700)).context("Failed to set temp dir permissions")?;
+
     info!("Created temporary directory: {:?}", temp_dir.path());
 
     let mut files_to_copy: Vec<PathBuf> = Vec::new();
@@ -105,60 +169,7 @@ fn main() -> Result<()> {
     info!("Found {} LUKS devices", device_uuid_map.len());
 
     for (device, uuid) in device_uuid_map {
-        info!("Backing up LUKS header for device {device} with UUID {uuid}");
-
-        let temp_file_path = temp_dir.path().join(format!("{uuid}.tmp"));
-
-        let mut cmd = Command::new("cryptsetup");
-        cmd.arg("luksHeaderBackup");
-        cmd.arg(&device);
-        cmd.arg("--header-backup-file");
-        cmd.arg(&temp_file_path);
-
-        run_command(&mut cmd).context("Backup LUKS header")?;
-
-        info!("Backup successful for {device}");
-
-        let temp_txt_path = temp_dir.path().join(format!("{uuid}.tmp.txt"));
-
-        let mut dump_cmd = Command::new("cryptsetup");
-        dump_cmd.arg("luksDump");
-        dump_cmd.arg(&temp_file_path);
-
-        let dump_output = run_command(&mut dump_cmd).context("Dump LUKS header")?;
-
-        fs::write(&temp_txt_path, &dump_output.stdout)
-            .context("Failed to write luksDump output to file")?;
-
-        info!("luksDump successful for {device}");
-
-        let mut header_data = Vec::new();
-        let mut file = fs::File::open(&temp_file_path).context("Failed to open temp file")?;
-        file.read_to_end(&mut header_data)
-            .context("Failed to read temp file")?;
-
-        let mut hasher = Sha256::new();
-        hasher.update(&header_data);
-        let hash = hasher.finalize();
-        let hash_hex: String = hash.iter().map(|byte| format!("{byte:02x}")).collect();
-        let short_hash = &hash_hex[0..8];
-        debug!("Computed SHA256 hash: {hash_hex}");
-
-        let final_img_path = temp_dir.path().join(format!(
-            "luks_header_backup.{hostname}.{uuid}.{short_hash}.img"
-        ));
-        let final_txt_path = temp_dir.path().join(format!(
-            "luks_header_backup.{hostname}.{uuid}.{short_hash}.txt"
-        ));
-
-        fs::rename(&temp_file_path, &final_img_path).context("Failed to rename temp img file")?;
-        fs::rename(&temp_txt_path, &final_txt_path).context("Failed to rename temp txt file")?;
-
-        info!("Saved header to {final_img_path:?}");
-        info!("Saved dump to {final_txt_path:?}");
-
-        files_to_copy.push(final_img_path);
-        files_to_copy.push(final_txt_path);
+        backup_device(device, uuid, &hostname, temp_dir.path(), &mut files_to_copy)?;
     }
 
     if files_to_copy.is_empty() {
@@ -179,6 +190,7 @@ fn main() -> Result<()> {
         scp_args.push(remote.clone());
 
         let mut cmd = Command::new("scp");
+        cmd.args(["-o", "StrictHostKeyChecking=yes", "-o", "BatchMode=yes"]);
         cmd.args(&scp_args);
 
         if let Err(e) = run_command(&mut cmd) {
