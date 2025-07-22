@@ -191,7 +191,7 @@ fn main() -> Result<()> {
         let mut cmd = Command::new("scp");
         cmd.args(&scp_args);
 
-        if let Err(e) = run_command(&mut cmd, &format!("run scp to {remote}")) {
+        if let Err(_) = run_command(&mut cmd, &format!("run scp to {remote}")) {
             all_success = false;
             // Error already logged in wrapper
         } else {
