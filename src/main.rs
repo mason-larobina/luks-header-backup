@@ -1,15 +1,12 @@
 use anyhow::{Context, Result};
 use clap::Parser;
-use env_logger;
 use log::*;
-use nix::unistd::getuid;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::Command;
-use tempfile;
 
 #[derive(Parser)]
 struct Args {
@@ -28,10 +25,12 @@ fn parse_blkid_output(output_str: &str) -> Result<HashMap<String, String>> {
                 map.insert(key.to_string(), value.to_string());
             }
         }
-        if map.get("TYPE").map_or(false, |ty| ty == "crypto_LUKS") {
+        if map.get("TYPE").map(|t| t == "crypto_LUKS").unwrap_or(false) {
             if let (Some(dev), Some(uuid)) = (map.get("DEVNAME"), map.get("UUID")) {
                 result.insert(dev.clone(), uuid.clone());
-                debug!("Found LUKS device {} with UUID {}", dev, uuid);
+                debug!("Found LUKS device {dev} with UUID {uuid}");
+            } else {
+                warn!("Found LUKS device but missing expected fields DEVNAME and UUID: {map:?}");
             }
         }
     }
@@ -43,7 +42,7 @@ fn get_luks_device_uuid_map() -> Result<HashMap<String, String>> {
     let mut cmd = Command::new("blkid");
     cmd.args(["-o", "export"]);
 
-    debug!("Running: {:?}", cmd);
+    debug!("Running: {cmd:?}");
     let output = cmd
         .output()
         .context("Failed to run blkid to find LUKS devices")?;
@@ -63,7 +62,7 @@ fn main() -> Result<()> {
     }
     env_logger::init();
 
-    if !getuid().is_root() {
+    if !nix::unistd::getuid().is_root() {
         anyhow::bail!("This program must be run as root");
     }
 
@@ -76,7 +75,7 @@ fn main() -> Result<()> {
         .context("Failed to get hostname")?
         .to_string_lossy()
         .to_string();
-    info!("Hostname: {}", hostname);
+    info!("Hostname: {hostname}");
 
     let temp_dir = tempfile::tempdir().context("Failed to create temp dir")?;
 
@@ -89,12 +88,9 @@ fn main() -> Result<()> {
     info!("Found {} LUKS devices", device_uuid_map.len());
 
     for (device, uuid) in device_uuid_map {
-        info!(
-            "Backing up LUKS header for device {} with UUID {}",
-            device, uuid
-        );
+        info!("Backing up LUKS header for device {device} with UUID {uuid}");
 
-        let temp_file_path = temp_dir.path().join(format!("{}.tmp", uuid));
+        let temp_file_path = temp_dir.path().join(format!("{uuid}.tmp"));
 
         let mut cmd = Command::new("cryptsetup");
         cmd.arg("luksHeaderBackup");
@@ -102,7 +98,7 @@ fn main() -> Result<()> {
         cmd.arg("--header-backup-file");
         cmd.arg(&temp_file_path);
 
-        debug!("Running: {:?}", cmd);
+        debug!("Running: {cmd:?}");
         let status = cmd.status().context("Failed to backup LUKS header")?;
 
         if !status.success() {
@@ -112,15 +108,15 @@ fn main() -> Result<()> {
             );
         }
 
-        info!("Backup successful for {}", device);
+        info!("Backup successful for {device}");
 
-        let temp_txt_path = temp_dir.path().join(format!("{}.tmp.txt", uuid));
+        let temp_txt_path = temp_dir.path().join(format!("{uuid}.tmp.txt"));
 
         let mut dump_cmd = Command::new("cryptsetup");
         dump_cmd.arg("luksDump");
         dump_cmd.arg(&temp_file_path);
 
-        debug!("Running: {:?}", dump_cmd);
+        debug!("Running: {dump_cmd:?}");
         let dump_output = dump_cmd.output().context("Failed to run luksDump")?;
 
         if !dump_output.status.success() {
@@ -133,7 +129,7 @@ fn main() -> Result<()> {
         fs::write(&temp_txt_path, &dump_output.stdout)
             .context("Failed to write luksDump output to file")?;
 
-        info!("luksDump successful for {}", device);
+        info!("luksDump successful for {device}");
 
         let mut header_data = Vec::new();
         let mut file = fs::File::open(&temp_file_path).context("Failed to open temp file")?;
@@ -144,21 +140,17 @@ fn main() -> Result<()> {
         hasher.update(&header_data);
         let hash = hasher.finalize();
 
-        let hash_hex: String = hash.iter().map(|byte| format!("{:02x}", byte)).collect();
+        let hash_hex: String = hash.iter().map(|byte| format!("{byte:02x}")).collect();
 
-        info!("Computed SHA256 hash: {}", hash_hex);
+        info!("Computed SHA256 hash: {hash_hex}");
 
         let final_img_path = temp_dir.path().join(format!(
-            "luks_header_backup.{}.{}.{}.img",
-            hostname,
-            uuid,
+            "luks_header_backup.{hostname}.{uuid}.{}.img",
             &hash_hex[0..8]
         ));
 
         let final_txt_path = temp_dir.path().join(format!(
-            "luks_header_backup.{}.{}.{}.txt",
-            hostname,
-            uuid,
+            "luks_header_backup.{hostname}.{uuid}.{}.txt",
             &hash_hex[0..8]
         ));
 
@@ -166,8 +158,8 @@ fn main() -> Result<()> {
 
         fs::rename(&temp_txt_path, &final_txt_path).context("Failed to rename temp txt file")?;
 
-        info!("Saved header to {:?}", final_img_path);
-        info!("Saved dump to {:?}", final_txt_path);
+        info!("Saved header to {final_img_path:?}");
+        info!("Saved dump to {final_txt_path:?}");
 
         files_to_copy.push(final_img_path);
         files_to_copy.push(final_txt_path);
@@ -181,9 +173,9 @@ fn main() -> Result<()> {
     let mut all_success = true;
 
     for remote in &args.remotes {
-        info!("Processing remote: {}", remote);
+        info!("Processing remote: {remote}");
 
-        assert!(files_to_copy.len() > 0);
+        assert!(!files_to_copy.is_empty());
         let mut scp_args: Vec<String> = files_to_copy
             .iter()
             .map(|p| p.to_string_lossy().to_string())
@@ -193,18 +185,17 @@ fn main() -> Result<()> {
         let mut cmd = Command::new("scp");
         cmd.args(&scp_args);
 
-        debug!("Running: {:?}", cmd);
+        debug!("Running: {cmd:?}");
         let status = cmd.status().context("Failed to run scp")?;
 
         if !status.success() {
             error!(
-                "scp to {} failed with exit code {}",
-                remote,
+                "scp to {remote} failed with exit code {}",
                 status.code().unwrap_or(-1)
             );
             all_success = false;
         } else {
-            info!("Copy successful to {}", remote);
+            info!("Copy successful to {remote}");
         }
     }
 

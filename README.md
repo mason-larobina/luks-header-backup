@@ -97,8 +97,7 @@ Then, reload systemd, enable, and start the timer:
 
 ```
 sudo systemctl daemon-reload
-sudo systemctl enable luks-header-backup.timer
-sudo systemctl start luks-header-backup.timer
+sudo systemctl enable luks-header-backup.timer --now
 ```
 
 Customize the `ExecStart` line with your actual remote destinations and adjust the `OnCalendar` for your preferred schedule (e.g., `daily`, `monthly`).
