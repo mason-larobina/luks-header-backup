@@ -38,24 +38,28 @@ fn parse_blkid_output(output_str: &str) -> Result<HashMap<String, String>> {
     Ok(result)
 }
 
-fn run_command(cmd: &mut Command, context_msg: &str) -> Result<Output> {
+fn run_command(cmd: &mut Command) -> Result<Output> {
     debug!("Running: {cmd:?}");
 
-    let output = cmd
-        .output()
-        .with_context(|| format!("Failed to execute command for: {context_msg}"))?;
+    let output = match cmd.output() {
+        Ok(o) => o,
+        Err(e) => {
+            error!("Failed to execute command {:?}: {}", cmd, e);
+            return Err(anyhow!("Failed to execute command {:?}: {}", cmd, e));
+        }
+    };
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         error!(
-            "Command failed for '{}': exit code {}, stderr: {}",
-            context_msg,
+            "Command {:?} failed with exit code {}: stderr: {}",
+            cmd,
             output.status.code().unwrap_or(-1),
             stderr
         );
         return Err(anyhow!(
-            "'{}' failed with exit code {}",
-            context_msg,
+            "Command {:?} failed with exit code {}",
+            cmd,
             output.status.code().unwrap_or(-1)
         ));
     }
@@ -67,7 +71,7 @@ fn get_luks_device_uuid_map() -> Result<HashMap<String, String>> {
     let mut cmd = Command::new("blkid");
     cmd.args(["-o", "export"]);
 
-    let output = run_command(&mut cmd, "run blkid to find LUKS devices")?;
+    let output = run_command(&mut cmd).with_context(|| "run blkid to find LUKS devices")?;
 
     let output_str = String::from_utf8(output.stdout).context("Failed to parse blkid output")?;
 
@@ -120,7 +124,7 @@ fn main() -> Result<()> {
         cmd.arg("--header-backup-file");
         cmd.arg(&temp_file_path);
 
-        run_command(&mut cmd, "backup LUKS header")?;
+        run_command(&mut cmd).with_context(|| "backup LUKS header")?;
 
         info!("Backup successful for {device}");
 
@@ -130,7 +134,7 @@ fn main() -> Result<()> {
         dump_cmd.arg("luksDump");
         dump_cmd.arg(&temp_file_path);
 
-        let dump_output = run_command(&mut dump_cmd, "run luksDump")?;
+        let dump_output = run_command(&mut dump_cmd).with_context(|| "run luksDump")?;
 
         fs::write(&temp_txt_path, &dump_output.stdout)
             .context("Failed to write luksDump output to file")?;
@@ -191,7 +195,7 @@ fn main() -> Result<()> {
         let mut cmd = Command::new("scp");
         cmd.args(&scp_args);
 
-        if let Err(_) = run_command(&mut cmd, &format!("run scp to {remote}")) {
+        if let Err(_) = run_command(&mut cmd).with_context(|| format!("run scp to {remote}")) {
             all_success = false;
             // Error already logged in wrapper
         } else {
