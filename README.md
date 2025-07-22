@@ -64,4 +64,43 @@ This will backup LUKS headers, save them temporarily with unique names like `luk
 - **Dependencies**: The tool relies on system commands like `blkid`, `cryptsetup`, and `scp`. Ensure they are installed and functional.
 - **Error handling**: Monitor logs for failures, especially SCP transfers. The tool will bail if any remote copy fails.
 
+## Scheduling with systemd
+
+To automate periodic backups, you can use systemd timer and service units. Below is an example configuration to run the backup weekly.
+
+Create `/etc/systemd/system/luks-header-backup.service` with the following content:
+
+```
+[Unit]
+Description=LUKS Header Backup
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/luks-header-backup root@backup-server:/backups/ # Add more remotes as arguments
+```
+
+Create `/etc/systemd/system/luks-header-backup.timer` with the following content:
+
+```
+[Unit]
+Description=Run LUKS Header Backup weekly
+
+[Timer]
+OnCalendar=weekly
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Then, reload systemd, enable, and start the timer:
+
+```
+sudo systemctl daemon-reload
+sudo systemctl enable luks-header-backup.timer
+sudo systemctl start luks-header-backup.timer
+```
+
+Customize the `ExecStart` line with your actual remote destinations and adjust the `OnCalendar` for your preferred schedule (e.g., `daily`, `monthly`).
+
 For issues or contributions, see the repository.
