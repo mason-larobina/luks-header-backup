@@ -1,9 +1,8 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use env_logger;
-use nix::sys::utsname::uname;
-use nix::unistd::getuid;
 use log::*;
+use nix::unistd::getuid;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
@@ -73,12 +72,10 @@ fn main() -> Result<()> {
         args.remotes
     );
 
-    let hostname = uname()
-        .context("Failed to get uname")?
-        .nodename()
+    let hostname = nix::unistd::gethostname()
+        .context("Failed to get hostname")?
         .to_string_lossy()
         .to_string();
-
     info!("Hostname: {}", hostname);
 
     let temp_dir = tempfile::tempdir().context("Failed to create temp dir")?;
@@ -133,7 +130,8 @@ fn main() -> Result<()> {
             );
         }
 
-        fs::write(&temp_txt_path, &dump_output.stdout).context("Failed to write luksDump output to file")?;
+        fs::write(&temp_txt_path, &dump_output.stdout)
+            .context("Failed to write luksDump output to file")?;
 
         info!("luksDump successful for {}", device);
 
@@ -199,7 +197,11 @@ fn main() -> Result<()> {
         let status = cmd.status().context("Failed to run scp")?;
 
         if !status.success() {
-            error!("scp to {} failed with exit code {}", remote, status.code().unwrap_or(-1));
+            error!(
+                "scp to {} failed with exit code {}",
+                remote,
+                status.code().unwrap_or(-1)
+            );
             all_success = false;
         } else {
             info!("Copy successful to {}", remote);

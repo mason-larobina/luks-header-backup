@@ -12,20 +12,28 @@ The tool requires root privileges to access devices and run commands. It logs pr
 
 2. Clone the repository:
    ```
-   git clone <repository-url>
-   cd <repository-directory>
+   git clone https://github.com/mason-larobina/luks-header-backup
+   cd luks-header-backup
    ```
 
 3. Build the project:
    ```
    cargo build --release
-   ```
-   The binary will be available at `target/release/luks-header-backup` (assuming the crate name in Cargo.toml is `luks-header-backup`).
 
-Alternatively, install it to your Cargo bin directory:
+   # Or 
+   cargo install --path=.
    ```
-   cargo install --path .
-   ```
+   The binary will be available at `target/release/luks-header-backup`
+
+
+4. Install the binary:
+
+    ```
+    $ sudo cp "${PWD}/target/release/luks-header-backup" /usr/local/bin/
+
+    # Or
+    $ sudo cp $(which luks-header-backup) /usr/local/bin/
+    ```
 
 ## Usage
 
@@ -41,7 +49,9 @@ sudo luks-header-backup <remote1> [remote2 ...]
 
 ### Example
 ```
-sudo luks-header-backup root@backup-server:/backups/ root@another-server:/storage/
+sudo luks-header-backup \
+    root@backup-server-a:/backups/ \
+    root@another-server-b:/storage/
 ```
 
 This will backup LUKS headers, save them temporarily with unique names like `luks_header_backup.hostname.uuid.shorthash.img` and `.txt`, and SCP them to the specified remotes.
@@ -51,12 +61,7 @@ This will backup LUKS headers, save them temporarily with unique names like `luk
 - **Run periodically**: Schedule this tool to run regularly (e.g., via cron) to ensure backups are current, especially after changes to LUKS setups.
 - **Secure storage**: Use secure, offsite or encrypted remote destinations to store backups. Avoid storing them on the same system as the originals.
 - **Verify backups**: After backup, verify the files by checking the embedded hash and testing restoration with `cryptsetup luksHeaderRestore` in a safe environment.
-- **Test thoroughly**: Run `cargo test` to execute unit tests (e.g., for parsing `blkid` output). Test the full tool on a virtual machine before using on production systems.
 - **Dependencies**: The tool relies on system commands like `blkid`, `cryptsetup`, and `scp`. Ensure they are installed and functional.
 - **Error handling**: Monitor logs for failures, especially SCP transfers. The tool will bail if any remote copy fails.
 
 For issues or contributions, see the repository.
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
