@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use log::*;
 use sha2::{Digest, Sha256};
@@ -44,23 +44,15 @@ fn run_command(cmd: &mut Command) -> Result<Output> {
     let output = match cmd.output() {
         Ok(o) => o,
         Err(e) => {
-            error!("Failed to execute command {:?}: {}", cmd, e);
             return Err(anyhow!("Failed to execute command {:?}: {}", cmd, e));
         }
     };
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        error!(
-            "Command {:?} failed with exit code {}: stderr: {}",
-            cmd,
-            output.status.code().unwrap_or(-1),
-            stderr
-        );
         return Err(anyhow!(
-            "Command {:?} failed with exit code {}",
-            cmd,
-            output.status.code().unwrap_or(-1)
+            "Command {cmd:?} failed with exit code {}: stderr: {}",
+            output.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&output.stderr),
         ));
     }
 
@@ -71,8 +63,7 @@ fn get_luks_device_uuid_map() -> Result<HashMap<String, String>> {
     let mut cmd = Command::new("blkid");
     cmd.args(["-o", "export"]);
 
-    let output = run_command(&mut cmd).with_context(|| "run blkid to find LUKS devices")?;
-
+    let output = run_command(&mut cmd).context("Find LUKS devices")?;
     let output_str = String::from_utf8(output.stdout).context("Failed to parse blkid output")?;
 
     parse_blkid_output(&output_str)
@@ -124,7 +115,7 @@ fn main() -> Result<()> {
         cmd.arg("--header-backup-file");
         cmd.arg(&temp_file_path);
 
-        run_command(&mut cmd).with_context(|| "backup LUKS header")?;
+        run_command(&mut cmd).context("Backup LUKS header")?;
 
         info!("Backup successful for {device}");
 
@@ -134,7 +125,7 @@ fn main() -> Result<()> {
         dump_cmd.arg("luksDump");
         dump_cmd.arg(&temp_file_path);
 
-        let dump_output = run_command(&mut dump_cmd).with_context(|| "run luksDump")?;
+        let dump_output = run_command(&mut dump_cmd).context("Dump LUKS header")?;
 
         fs::write(&temp_txt_path, &dump_output.stdout)
             .context("Failed to write luksDump output to file")?;
@@ -149,23 +140,18 @@ fn main() -> Result<()> {
         let mut hasher = Sha256::new();
         hasher.update(&header_data);
         let hash = hasher.finalize();
-
         let hash_hex: String = hash.iter().map(|byte| format!("{byte:02x}")).collect();
-
-        info!("Computed SHA256 hash: {hash_hex}");
+        let short_hash = &hash_hex[0..8];
+        debug!("Computed SHA256 hash: {hash_hex}");
 
         let final_img_path = temp_dir.path().join(format!(
-            "luks_header_backup.{hostname}.{uuid}.{}.img",
-            &hash_hex[0..8]
+            "luks_header_backup.{hostname}.{uuid}.{short_hash}.img"
         ));
-
         let final_txt_path = temp_dir.path().join(format!(
-            "luks_header_backup.{hostname}.{uuid}.{}.txt",
-            &hash_hex[0..8]
+            "luks_header_backup.{hostname}.{uuid}.{short_hash}.txt"
         ));
 
         fs::rename(&temp_file_path, &final_img_path).context("Failed to rename temp img file")?;
-
         fs::rename(&temp_txt_path, &final_txt_path).context("Failed to rename temp txt file")?;
 
         info!("Saved header to {final_img_path:?}");
@@ -195,9 +181,9 @@ fn main() -> Result<()> {
         let mut cmd = Command::new("scp");
         cmd.args(&scp_args);
 
-        if let Err(_) = run_command(&mut cmd).with_context(|| format!("run scp to {remote}")) {
+        if let Err(e) = run_command(&mut cmd) {
+            error!("{e}");
             all_success = false;
-            // Error already logged in wrapper
         } else {
             info!("Copy successful to {remote}");
         }
