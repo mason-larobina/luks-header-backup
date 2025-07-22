@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use log::*;
 use sha2::{Digest, Sha256};
@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Output};
 
 #[derive(Parser)]
 struct Args {
@@ -38,14 +38,36 @@ fn parse_blkid_output(output_str: &str) -> Result<HashMap<String, String>> {
     Ok(result)
 }
 
+fn run_command(cmd: &mut Command, context_msg: &str) -> Result<Output> {
+    debug!("Running: {cmd:?}");
+
+    let output = cmd
+        .output()
+        .with_context(|| format!("Failed to execute command for: {context_msg}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        error!(
+            "Command failed for '{}': exit code {}, stderr: {}",
+            context_msg,
+            output.status.code().unwrap_or(-1),
+            stderr
+        );
+        return Err(anyhow!(
+            "'{}' failed with exit code {}",
+            context_msg,
+            output.status.code().unwrap_or(-1)
+        ));
+    }
+
+    Ok(output)
+}
+
 fn get_luks_device_uuid_map() -> Result<HashMap<String, String>> {
     let mut cmd = Command::new("blkid");
     cmd.args(["-o", "export"]);
 
-    debug!("Running: {cmd:?}");
-    let output = cmd
-        .output()
-        .context("Failed to run blkid to find LUKS devices")?;
+    let output = run_command(&mut cmd, "run blkid to find LUKS devices")?;
 
     let output_str = String::from_utf8(output.stdout).context("Failed to parse blkid output")?;
 
@@ -98,15 +120,7 @@ fn main() -> Result<()> {
         cmd.arg("--header-backup-file");
         cmd.arg(&temp_file_path);
 
-        debug!("Running: {cmd:?}");
-        let status = cmd.status().context("Failed to backup LUKS header")?;
-
-        if !status.success() {
-            anyhow::bail!(
-                "cryptsetup failed with exit code {}",
-                status.code().unwrap_or(-1)
-            );
-        }
+        run_command(&mut cmd, "backup LUKS header")?;
 
         info!("Backup successful for {device}");
 
@@ -116,15 +130,7 @@ fn main() -> Result<()> {
         dump_cmd.arg("luksDump");
         dump_cmd.arg(&temp_file_path);
 
-        debug!("Running: {dump_cmd:?}");
-        let dump_output = dump_cmd.output().context("Failed to run luksDump")?;
-
-        if !dump_output.status.success() {
-            anyhow::bail!(
-                "luksDump failed with exit code {}",
-                dump_output.status.code().unwrap_or(-1)
-            );
-        }
+        let dump_output = run_command(&mut dump_cmd, "run luksDump")?;
 
         fs::write(&temp_txt_path, &dump_output.stdout)
             .context("Failed to write luksDump output to file")?;
@@ -185,15 +191,9 @@ fn main() -> Result<()> {
         let mut cmd = Command::new("scp");
         cmd.args(&scp_args);
 
-        debug!("Running: {cmd:?}");
-        let status = cmd.status().context("Failed to run scp")?;
-
-        if !status.success() {
-            error!(
-                "scp to {remote} failed with exit code {}",
-                status.code().unwrap_or(-1)
-            );
+        if let Err(e) = run_command(&mut cmd, &format!("run scp to {remote}")) {
             all_success = false;
+            // Error already logged in wrapper
         } else {
             info!("Copy successful to {remote}");
         }
