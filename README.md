@@ -10,30 +10,32 @@ The tool requires root privileges to access devices and run commands. It logs pr
 
 1. Ensure you have Rust and Cargo installed. If not, follow the instructions at [rustup.rs](https://rustup.rs/).
 
-2. Clone the repository:
+1. Clone the repository:
+
    ```
    git clone https://github.com/mason-larobina/luks-header-backup
    cd luks-header-backup
    ```
 
-3. Build the project:
+1. Build the project:
+
    ```
    cargo build --release
 
    # Or 
    cargo install --path=.
    ```
+
    The binary will be available at `target/release/luks-header-backup`
 
+1. Install the binary:
 
-4. Install the binary:
+   ```
+   $ sudo cp "${PWD}/target/release/luks-header-backup" /usr/local/bin/
 
-    ```
-    $ sudo cp "${PWD}/target/release/luks-header-backup" /usr/local/bin/
-
-    # Or
-    $ sudo cp $(which luks-header-backup) /usr/local/bin/
-    ```
+   # Or
+   $ sudo cp $(which luks-header-backup) /usr/local/bin/
+   ```
 
 ## Usage
 
@@ -44,10 +46,12 @@ sudo luks-header-backup <remote1> [remote2 ...]
 ```
 
 ### Options
+
 - The tool uses `clap` for argument parsing. Use `--help` for details.
 - Set the log level with `RUST_LOG` (e.g., `RUST_LOG=debug sudo luks-header-backup ...` for verbose output).
 
 ### Example
+
 ```
 sudo luks-header-backup \
     root@backup-server-a:/backups/ \

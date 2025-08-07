@@ -183,7 +183,12 @@ fn main() -> Result<()> {
 
     let mut artifacts: Vec<BackupArtifacts> = Vec::new();
     for (device, uuid) in device_uuid_map {
-        artifacts.push(create_backup_artifacts(&device, &uuid, &hostname, temp_dir.path())?);
+        artifacts.push(create_backup_artifacts(
+            &device,
+            &uuid,
+            &hostname,
+            temp_dir.path(),
+        )?);
     }
 
     if !args.backup_paths.is_empty() {
@@ -195,11 +200,17 @@ fn main() -> Result<()> {
                 let dest_img_path = backup_path.join(artifact.img_path.file_name().unwrap());
                 let dest_txt_path = backup_path.join(artifact.txt_path.file_name().unwrap());
 
-                let tmp_img_path = backup_path.join(format!(".{}.tmp", artifact.img_path.file_name().unwrap().to_str().unwrap()));
+                let tmp_img_path = backup_path.join(format!(
+                    ".{}.tmp",
+                    artifact.img_path.file_name().unwrap().to_str().unwrap()
+                ));
                 fs::copy(&artifact.img_path, &tmp_img_path)?;
                 fs::rename(&tmp_img_path, &dest_img_path)?;
 
-                let tmp_txt_path = backup_path.join(format!(".{}.tmp", artifact.txt_path.file_name().unwrap().to_str().unwrap()));
+                let tmp_txt_path = backup_path.join(format!(
+                    ".{}.tmp",
+                    artifact.txt_path.file_name().unwrap().to_str().unwrap()
+                ));
                 fs::copy(&artifact.txt_path, &tmp_txt_path)?;
                 fs::rename(&tmp_txt_path, &dest_txt_path)?;
 
@@ -209,7 +220,10 @@ fn main() -> Result<()> {
     }
 
     if !args.remote_paths.is_empty() {
-        let files_to_copy: Vec<PathBuf> = artifacts.iter().flat_map(|a| vec![a.img_path.clone(), a.txt_path.clone()]).collect();
+        let files_to_copy: Vec<PathBuf> = artifacts
+            .iter()
+            .flat_map(|a| vec![a.img_path.clone(), a.txt_path.clone()])
+            .collect();
 
         if files_to_copy.is_empty() {
             info!("No backups to create for remote locations.");
