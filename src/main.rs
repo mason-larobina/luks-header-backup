@@ -10,10 +10,15 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 #[derive(Parser, Debug)]
+#[command(about = "A tool to backup LUKS headers.")]
 struct Args {
-    /// Remote SCP destinations (e.g., root@host:/backup/dir/)
-    #[arg(required = true)]
-    remotes: Vec<String>,
+    /// Remote SCP destinations (e.g., root@host:/backup/dir/).
+    #[arg(long = "remote-path")]
+    remote_paths: Vec<String>,
+
+    /// Local paths to backup headers to.
+    #[arg(long = "backup-path")]
+    backup_paths: Vec<PathBuf>,
 }
 
 fn run_command(cmd: &mut Command) -> Result<Output> {
@@ -70,21 +75,27 @@ fn get_luks_device_uuid_map() -> Result<HashMap<String, String>> {
     parse_blkid_output(&output_str)
 }
 
-fn backup_device(
-    device: String,
+struct BackupArtifacts {
     uuid: String,
+    img_path: PathBuf,
+    txt_path: PathBuf,
+    short_hash: String,
+}
+
+fn create_backup_artifacts(
+    device: &str,
+    uuid: &str,
     hostname: &str,
     temp_path: &Path,
-    files_to_copy: &mut Vec<PathBuf>,
-) -> Result<()> {
-    info!("Backing up LUKS header for device {device} with UUID {uuid}");
+) -> Result<BackupArtifacts> {
+    info!("Creating backup artifacts for device {device} with UUID {uuid}");
 
     let temp_file_path = temp_path.join(format!("{uuid}.img.tmp"));
     let temp_txt_path = temp_path.join(format!("{uuid}.txt.tmp"));
 
     let mut cmd = Command::new("cryptsetup");
     cmd.arg("luksHeaderBackup");
-    cmd.arg(&device);
+    cmd.arg(device);
     cmd.arg("--header-backup-file");
     cmd.arg(&temp_file_path);
     run_command(&mut cmd).context("Backup LUKS header")?;
@@ -105,7 +116,7 @@ fn backup_device(
     hasher.update(&header_data);
     let hash = hasher.finalize();
     let hash_hex: String = hash.iter().map(|byte| format!("{byte:02x}")).collect();
-    let short_hash = &hash_hex[0..8];
+    let short_hash = hash_hex[0..8].to_string();
     debug!("Computed SHA256 hash: {hash_hex}");
 
     let final_img_path = temp_path.join(format!(
@@ -126,10 +137,12 @@ fn backup_device(
     info!("Saved header to {final_img_path:?}");
     info!("Saved header dump to {final_txt_path:?}");
 
-    files_to_copy.push(final_img_path);
-    files_to_copy.push(final_txt_path);
-
-    Ok(())
+    Ok(BackupArtifacts {
+        uuid: uuid.to_string(),
+        img_path: final_img_path,
+        txt_path: final_txt_path,
+        short_hash,
+    })
 }
 
 fn main() -> Result<()> {
@@ -143,14 +156,13 @@ fn main() -> Result<()> {
     let args = Args::parse();
     debug!("{args:?}");
 
+    if args.remote_paths.is_empty() && args.backup_paths.is_empty() {
+        anyhow::bail!("At least one of --remote-path or --backup-path must be provided.");
+    }
+
     if !nix::unistd::getuid().is_root() {
         anyhow::bail!("This program must be run as root");
     }
-
-    info!(
-        "Starting LUKS header backup with remotes: {:?}",
-        args.remotes
-    );
 
     let hostname = nix::unistd::gethostname()
         .context("Failed to get hostname")?
@@ -164,8 +176,6 @@ fn main() -> Result<()> {
         .context("Failed to set temp dir permissions")?;
     info!("Created temporary directory: {:?}", temp_dir.path());
 
-    let mut files_to_copy: Vec<PathBuf> = Vec::new();
-
     let device_uuid_map = get_luks_device_uuid_map()?;
     if device_uuid_map.is_empty() {
         anyhow::bail!("Expected to find at least one LUKS device to backup header.");
@@ -173,37 +183,66 @@ fn main() -> Result<()> {
         info!("Found {} LUKS devices", device_uuid_map.len());
     }
 
+    let mut artifacts: Vec<BackupArtifacts> = Vec::new();
     for (device, uuid) in device_uuid_map {
-        backup_device(device, uuid, &hostname, temp_dir.path(), &mut files_to_copy)?;
+        artifacts.push(create_backup_artifacts(&device, &uuid, &hostname, temp_dir.path())?);
     }
 
-    assert!(!files_to_copy.is_empty());
+    if !args.backup_paths.is_empty() {
+        for backup_path in &args.backup_paths {
+            info!("Backing up to local path: {backup_path:?}");
+            fs::create_dir_all(backup_path).context("Failed to create backup directory")?;
 
-    let mut all_success = true;
-    for remote in &args.remotes {
-        info!("Pushing to remote: {remote}");
+            for artifact in &artifacts {
+                let dest_img_path = backup_path.join(artifact.img_path.file_name().unwrap());
+                let dest_txt_path = backup_path.join(artifact.txt_path.file_name().unwrap());
 
-        let mut cmd = Command::new("scp");
-        cmd.args(["-o", "StrictHostKeyChecking=yes", "-o", "BatchMode=yes"]);
-        for path in &files_to_copy {
-            cmd.arg(path);
+                let tmp_img_path = backup_path.join(format!(".{}.tmp", artifact.img_path.file_name().unwrap().to_str().unwrap()));
+                fs::copy(&artifact.img_path, &tmp_img_path)?;
+                fs::rename(&tmp_img_path, &dest_img_path)?;
+
+                let tmp_txt_path = backup_path.join(format!(".{}.tmp", artifact.txt_path.file_name().unwrap().to_str().unwrap()));
+                fs::copy(&artifact.txt_path, &tmp_txt_path)?;
+                fs::rename(&tmp_txt_path, &dest_txt_path)?;
+
+                info!("Saved backup for {} to {dest_img_path:?}", artifact.uuid);
+            }
         }
-        cmd.arg(remote);
+    }
 
-        if let Err(e) = run_command(&mut cmd) {
-            error!("{e}");
-            all_success = false;
+    if !args.remote_paths.is_empty() {
+        let files_to_copy: Vec<PathBuf> = artifacts.iter().flat_map(|a| vec![a.img_path.clone(), a.txt_path.clone()]).collect();
+
+        if files_to_copy.is_empty() {
+            info!("No backups to create for remote locations.");
         } else {
-            info!("Copy successful to {remote}");
+            let mut all_success = true;
+            for remote in &args.remote_paths {
+                info!("Pushing to remote: {remote}");
+
+                let mut cmd = Command::new("scp");
+                cmd.args(["-o", "StrictHostKeyChecking=yes", "-o", "BatchMode=yes"]);
+                for path in &files_to_copy {
+                    cmd.arg(path);
+                }
+                cmd.arg(remote);
+
+                if let Err(e) = run_command(&mut cmd) {
+                    error!("{e}");
+                    all_success = false;
+                } else {
+                    info!("Copy successful to {remote}");
+                }
+            }
+
+            if !all_success {
+                anyhow::bail!("Some remote copies failed");
+            }
         }
     }
 
-    if all_success {
-        info!("Backup process completed successfully");
-        Ok(())
-    } else {
-        anyhow::bail!("Some remote copies failed");
-    }
+    info!("Backup process completed successfully");
+    Ok(())
 }
 
 #[cfg(test)]
