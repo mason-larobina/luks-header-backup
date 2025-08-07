@@ -79,7 +79,6 @@ struct BackupArtifacts {
     uuid: String,
     img_path: PathBuf,
     txt_path: PathBuf,
-    short_hash: String,
 }
 
 fn create_backup_artifacts(
@@ -141,7 +140,6 @@ fn create_backup_artifacts(
         uuid: uuid.to_string(),
         img_path: final_img_path,
         txt_path: final_txt_path,
-        short_hash,
     })
 }
 
