@@ -2,7 +2,7 @@
 
 ## Description
 
-This is a command-line tool written in Rust that automates the backup of LUKS (Linux Unified Key Setup) headers from encrypted devices on your system. It detects LUKS devices using `blkid`, backs up their headers with `cryptsetup luksHeaderBackup`, generates a textual dump with `cryptsetup luksDump`, computes a SHA256 hash of the header for verification, and names the files incorporating the hostname, device UUID, and a short hash. The backups are then copied to one or more remote destinations via SCP.
+This is a command-line tool written in Rust that automates the backup of LUKS (Linux Unified Key Setup) headers from encrypted devices on your system. It detects LUKS devices using `blkid`, backs up their headers with `cryptsetup luksHeaderBackup`, generates a textual dump with `cryptsetup luksDump`, computes a SHA256 hash of the header for verification, and names the files incorporating the hostname, device UUID, and a short hash. The backups are then copied to one or more remote destinations via SCP or saved to local directories.
 
 The tool requires root privileges to access devices and run commands. It logs progress and errors, with configurable log levels via the `RUST_LOG` environment variable.
 
@@ -39,26 +39,28 @@ The tool requires root privileges to access devices and run commands. It logs pr
 
 ## Usage
 
-Run the tool as root, providing one or more remote SCP destinations (e.g., `root@host:/backup/dir/`):
+Run the tool as root, providing one or more remote SCP destinations as positional arguments (e.g., `root@host:/backup/dir/`) and/or local backup paths with `--backup-path`:
 
 ```
-sudo luks-header-backup --remote-path=<remote1> --remote-path=<remote2> [..]
+sudo luks-header-backup [OPTIONS] [REMOTE_PATHS]...
 ```
 
 ### Options
 
-- The tool uses `clap` for argument parsing. Use `--help` for details.
+- `--backup-path <backup_paths>...` - Local paths to backup headers to
+- `--help` - Print help information
 - Set the log level with `RUST_LOG` (e.g., `RUST_LOG=debug sudo luks-header-backup ...` for verbose output).
 
 ### Example
 
 ```
 sudo luks-header-backup \
+    --backup-path /local/backup/ \
     root@backup-server-a:/backups/ \
     root@another-server-b:/storage/
 ```
 
-This will backup LUKS headers, save them temporarily with unique names like `luks_header_backup.hostname.uuid.shorthash.img` and `.txt`, and SCP them to the specified remotes.
+This will backup LUKS headers, save them temporarily with unique names like `luks_header_backup.hostname.uuid.shorthash.img` and `.txt`, and copy them to both the local backup path and the specified remote destinations.
 
 ## Recommendations
 
@@ -80,7 +82,7 @@ Description=LUKS Header Backup
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/luks-header-backup root@backup-server:/backups/ # Add more remotes as arguments
+ExecStart=/usr/local/bin/luks-header-backup --backup-path /local/backup/ root@backup-server:/backups/
 ```
 
 Create `/etc/systemd/system/luks-header-backup.timer` with the following content:
