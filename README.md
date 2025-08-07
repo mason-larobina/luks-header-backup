@@ -39,14 +39,15 @@ The tool requires root privileges to access devices and run commands. It logs pr
 
 ## Usage
 
-Run the tool as root, providing one or more remote SCP destinations as positional arguments (e.g., `root@host:/backup/dir/`) and/or local backup paths with `--backup-path`:
+Run the tool as root, providing one or more remote SCP destinations with `--remote-path` and/or local backup paths with `--backup-path`:
 
 ```
-sudo luks-header-backup [OPTIONS] [REMOTE_PATHS]...
+sudo luks-header-backup [OPTIONS]
 ```
 
 ### Options
 
+- `--remote-path <remote_paths>...` - Remote SCP destinations (e.g., `root@host:/backup/dir/`)
 - `--backup-path <backup_paths>...` - Local paths to backup headers to
 - `--help` - Print help information
 - Set the log level with `RUST_LOG` (e.g., `RUST_LOG=debug sudo luks-header-backup ...` for verbose output).
@@ -56,8 +57,8 @@ sudo luks-header-backup [OPTIONS] [REMOTE_PATHS]...
 ```
 sudo luks-header-backup \
     --backup-path /local/backup/ \
-    root@backup-server-a:/backups/ \
-    root@another-server-b:/storage/
+    --remote-path root@backup-server-a:/backups/ \
+    --remote-path root@another-server-b:/storage/
 ```
 
 This will backup LUKS headers, save them temporarily with unique names like `luks_header_backup.hostname.uuid.shorthash.img` and `.txt`, and copy them to both the local backup path and the specified remote destinations.
@@ -82,7 +83,7 @@ Description=LUKS Header Backup
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/luks-header-backup --backup-path /local/backup/ root@backup-server:/backups/
+ExecStart=/usr/local/bin/luks-header-backup --backup-path /local/backup/ --remote-path root@backup-server:/backups/
 ```
 
 Create `/etc/systemd/system/luks-header-backup.timer` with the following content:
