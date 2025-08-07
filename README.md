@@ -42,7 +42,7 @@ The tool requires root privileges to access devices and run commands. It logs pr
 Run the tool as root, providing one or more remote SCP destinations (e.g., `root@host:/backup/dir/`):
 
 ```
-sudo luks-header-backup <remote1> [remote2 ...]
+sudo luks-header-backup --remote-path=<remote1> --remote-path=<remote2> [..]
 ```
 
 ### Options
